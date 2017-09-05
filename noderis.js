@@ -33,7 +33,7 @@ function seraializeInputRESP(input) {
  * Load and parse RESP answer from Redis recursively
  * @param {RedisClient} redisClient Socket object
  * @param {boolean=false} shouldReturnObject If the command should return object (convert it to a JS object)
- * @param {Callback} cb
+ * @param {Callback=} cb
  * @return {string|int|Object}
  */
 function loadRESP(redisClient, shouldReturnObject, cb) {
@@ -599,7 +599,7 @@ RedisClient.prototype = {
      * @param {string} key
      * @param {string} field
      * @param {string|int} value
-     * @param {Callback} cb resp will be 1 if field is new, 0 if field is already exists
+     * @param {Callback=} cb resp will be 1 if field is new, 0 if field is already exists
      * @return {RedisClient}
      */
     hset(key, field, value, cb) { return this.callRedis('HSET', cb, key, field, value) },
@@ -608,7 +608,7 @@ RedisClient.prototype = {
      * Sets the specified fields to their respective values in the hash stored at key.
      * @param {string} key
      * @param {Object} object The key-value JS object to store as hash
-     * @param {Callback} cb
+     * @param {Callback=} cb
      * @return {RedisClient}
      */
     hmset(key, object, cb) {
@@ -634,7 +634,7 @@ RedisClient.prototype = {
      * Returns the value associated with field in the hash stored at key.
      * @param {string} key
      * @param {string} field
-     * @param {Callback} cb
+     * @param {Callback=} cb
      * @return {RedisClient}
      */
     hget(key, field, cb) { return this.callRedis('HGET', cb, key, field)},
@@ -643,7 +643,7 @@ RedisClient.prototype = {
      * Returns all fields and values of the hash stored at key.
      * Returns with JS key-value object
      * @param {string} key
-     * @param {Callback} cb
+     * @param {Callback=} cb
      * @return {RedisClient}
      */
     hgetall(key, cb) { return this.callRedisGetObject('HGETALL', cb, key)},
@@ -654,7 +654,7 @@ RedisClient.prototype = {
      * @param {string} key
      * @param {string} field
      * @param {number|int=1} incrBy
-     * @param {Callback} cb
+     * @param {Callback=} cb
      * @return {RedisClient}
      */
     hincr(key, field, incrBy, cb) {
@@ -667,7 +667,7 @@ RedisClient.prototype = {
      * Removes the specified fields from the hash stored at key.
      * @param {string} key
      * @param {string} field
-     * @param {Callback} cb
+     * @param {Callback=} cb
      * @return {RedisClient}
      */
     hdel(key, field, cb) { return this.callRedis('HDEL', cb, key, field)},
@@ -1242,7 +1242,7 @@ RedisClientPool.prototype = {
     /**
      * Start a transaction on an available client. This will block the client until EXEC is called
      * Use .pmulti() instead of this if possible, which creates a pipeline object then send everything at once.
-     * @param {Callback} cb
+     * @param {Callback=} cb
      * @return {RedisClient}
      */
     multi(cb) {

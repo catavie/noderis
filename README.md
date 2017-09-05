@@ -189,7 +189,7 @@ RedisClient.prototype = {
      * Command description 
      * @param {string} param1
      * @param {string} param2
-     * @param {Callback} cb resp will be ... (document what resp will be in the callback)
+     * @param {Callback=} cb resp will be ... (document what resp will be in the callback)
      * @return {RedisClient}
      */
     command(param1, param2, cb) {
