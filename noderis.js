@@ -695,7 +695,7 @@ util.inherits(RedisClient, events.EventEmitter);
  */
 function RedisClientAsyncProxy(rclient, pipelineClass) {
     this.proxified = rclient;
-    this.pipelineClass = pipelineClass || RedisPipeline;
+    this.pipelineClass = pipelineClass || RedisPipelineAsync;
 }
 
 /**
@@ -768,7 +768,7 @@ RedisClientAsyncProxy.prototype = {
 
     /**
      * Create a pipeline object which can concatenate multiple redis commands and send at once
-     * @return {RedisPipeline}
+     * @return {RedisPipelineAsync}
      */
     pipeline() { return new this.pipelineClass(this.proxified) },
 
@@ -816,10 +816,9 @@ RedisClientAsyncProxy.prototype = {
      * Start a Redis "transaction" with pipeline (so all commands are sent at the same time)
      * It is a shortcut to .pipeline.multi()
      * It can be end with send. You don't need to close it with .exec if autoCloseTransaction option is true (default)
-     * @param {Callback=} cb
-     * @return {RedisPipeline}
+     * @return {RedisPipelineAsync}
      */
-    pmulti: RedisClient.prototype.pmulti,
+    pmulti: function() { return this.pipeline().multi() },
 
     /* Global */
 
@@ -1102,11 +1101,11 @@ RedisPipeline.prototype = {
 
 // noinspection JSCheckFunctionSignatures
 RedisPipeline.prototype.connect =
-RedisPipeline.prototype.disconnect =
-RedisPipeline.prototype.reconnect =
-RedisPipeline.prototype.reconnectAfter = () => {
-    throw "Use the RedisClient's own function instead of the pipeline!"
-};
+    RedisPipeline.prototype.disconnect =
+        RedisPipeline.prototype.reconnect =
+            RedisPipeline.prototype.reconnectAfter = () => {
+                throw "Use the RedisClient's own function instead of the pipeline!"
+            };
 
 // All other methods inherited from RedisClient
 util.inherits(RedisPipeline, RedisClient);
