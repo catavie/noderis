@@ -8,7 +8,7 @@
     "type": "git",
     "url": "git://github.com/wallneradam/noderis.git"
   },
-  "main": "./",
+  "main": "noderis.js",
   "engines": {
     "node": "^6.0.0"
   },

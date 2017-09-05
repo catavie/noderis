@@ -146,6 +146,8 @@ function loadRESP(redisClient, shouldReturnObject, cb) {
  * @param {string=} host Redis host (default is 127.0.0.01)
  * @param {{autoReconnectAfter: int|undefined=,
  *          autoCloseTransaction: boolean|undefined=}=} options RedisClient options
+ *                  autoReconnectAfter -- If disconnected, after how many seconds we try to reconnect, if false, no reconnect
+ *                  autoCloseTransaction -- call EXEC automatically in a pipeline (pmulti)
  * @constructor
  * @extends EventEmitter
  */
