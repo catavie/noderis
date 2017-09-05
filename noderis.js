@@ -586,9 +586,55 @@ RedisClient.prototype = {
 
     /* Sets */
 
-    sadd(key, value, cb) { return this.callRedis('SADD', cb, key, value) },
-    spop(key, cb) { return this.callRedis('SPOP', cb, key) },
-    srem(key, value, cb) { return this.callRedis('SREM', cb, key, value) },
+    /**
+     * Add the specified value to the set stored at key.
+     * @param {string} key
+     * @param {string|int|(string|int)[]} member Member(s) to add
+     * @param {Callback=} cb resp will be the number of elements that were added to the set (1 or 0)
+     * @return {RedisClient}
+     */
+    sadd(key, member, cb) {
+        if (!Array.isArray(member)) member = [member];
+        return this.callRedis('SADD', cb, key, ...member);
+    },
+
+    /**
+     * Removes and returns one or more random elements from the set value store at key.
+     * @param {string} key
+     * @param {int|Callback=} count The number of elements to return
+     *                              If not needed, it can be the callback instead
+     * @param {Callback=} cb resp will be the number of elements that were added to the set
+     * @return {RedisClient}
+     */
+    spop(key, count, cb) {
+        var params = [];
+        // If no count specified then callback can be that position
+        if (typeof count == 'function') {
+            cb = count;
+            count = null;
+        }
+        if (count) params.push(count);
+        return this.callRedis('SPOP', cb, key, ...params)
+    },
+
+    /**
+     * Remove the specified members from the set stored at key
+     * @param {string} key
+     * @param {string|int|(string|int)[]} member Member(s) to remove
+     * @param {Callback=} cb
+     * @return {RedisClient}
+     */
+    srem(key, member, cb) {
+        if (!Array.isArray(member)) member = [member];
+        return this.callRedis('SREM', cb, key, member)
+    },
+
+    /**
+     * Returns the set cardinality (number of elements) of the set stored at key.
+     * @param {string} key
+     * @param {Callback=} cb resp will be the number of elements
+     * @return {RedisClient}
+     */
     scard(key, cb) { return this.callRedis('SCARD', cb, key) },
 
     /* Hashes */
@@ -607,7 +653,7 @@ RedisClient.prototype = {
     /**
      * Sets the specified fields to their respective values in the hash stored at key.
      * @param {string} key
-     * @param {Object} object The key-value JS object to store as hash
+     * @param {{}} object The key-value JS object to store as hash
      * @param {Callback=} cb
      * @return {RedisClient}
      */
@@ -928,9 +974,35 @@ RedisClientAsyncProxy.prototype = {
 
     /* Sets */
 
+    /**
+     * Add the specified value to the set stored at key.
+     * @param {string} key
+     * @param {string|int|(string|int)[]} member Member(s) to add
+     * @return {Promise.<int>} the number of elements that were added to the set
+     */
     sadd: proxyfy(RedisClient.prototype.sadd),
+
+    /**
+     * Removes and returns one or more random elements from the set value store at key.
+     * @param {string} key
+     * @param {int=} count The number of elements to return
+     * @return {Promise.<int>} the number of elements that were added to the set
+     */
     spop: proxyfy(RedisClient.prototype.spop),
+
+    /**
+     * Remove the specified members from the set stored at key
+     * @param {string} key
+     * @param {string|int|(string|int)[]} member Member(s) to remove
+     * @return {Promise.<int>} the number of elements removed from the set
+     */
     srem: proxyfy(RedisClient.prototype.srem),
+
+    /**
+     * Returns the set cardinality (number of elements) of the set stored at key.
+     * @param {string} key
+     * @return {Promise.<int>} the number of elements
+     */
     scard: proxyfy(RedisClient.prototype.scard),
 
     /* Hashes */
@@ -1037,7 +1109,7 @@ RedisPipeline.prototype = {
                 i = 0;
 
             // If no returnIndex but callback is specified,
-            if (typeof(returnIndex) == 'function') {
+            if (typeof returnIndex == 'function') {
                 send_cb = returnIndex;
                 returnIndex = null;
             }
