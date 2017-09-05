@@ -518,7 +518,7 @@ RedisClient.prototype = {
      * @param {string|number} value
      * @param {int} ex Expiration in seconds
      * @param {Callback=} cb resp Should be "OK"
-     * @return {*|RedisClient}
+     * @return {RedisClient}
      */
     setex(key, value, ex, cb) { return this.set(key, value, {ex: ex}, cb) },
 
@@ -874,9 +874,18 @@ RedisClientAsyncProxy.prototype = {
      *               PX milliseconds -- Set the specified expire time, in milliseconds.
      *               NX -- Only set the key if it does not already exist.
      *               XX -- Only set the key if it already exists.
-     * @return {Promise.<String>} Should be "OK"
+     * @return {Promise.<string>} Should be "OK"
      */
     set: proxyfy(RedisClient.prototype.set),
+
+    /**
+     * Shortcut for set with options "ex"
+     * @param {string} key
+     * @param {string|number} value
+     * @param {int} ex Expiration in seconds
+     * @return {Promise.<string>} Should be "OK"
+     */
+    setex: proxyfy(RedisClient.prototype.set),
 
     /**
      * Set multiple key-values at once
