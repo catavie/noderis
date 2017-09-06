@@ -13,6 +13,7 @@ A standalone Node.js client for Redis
 - Connection pool is transparent, it is just a proxy for the 1st available connection. So you even don't notice that you use a pool. 
 - Clear, understandable, not too complicated code. Redis commands are real functions, IDEs (like PHPStorm or Webstorm) can understand it.
 - Methods and commands have a JSDoc comment with types specified.
+- Good stack trace on redis error.
 
 Maybe it's not as fast as a C++ based parser, but still very fast though. Official Node-redis has no connection pool feature, 
 so only one command can be run at a time (or there would be collisions). So if you have 100 users at the same time, they

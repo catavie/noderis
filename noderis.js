@@ -39,7 +39,7 @@ function seraializeInputRESP(input) {
 function loadRESP(redisClient, shouldReturnObject, cb) {
     // Wait for a line from socket
     redisClient._readLine((raw) => {
-        if (raw === false) cb(new Error('Protocol error!'));
+        if (raw === false) cb('Protocol error!');
 
         var fb = raw.substr(0, 1),
             data, length;
@@ -53,7 +53,7 @@ function loadRESP(redisClient, shouldReturnObject, cb) {
 
             // Errors
             case '-':
-                cb(new Error(raw.substr(1)));
+                cb(raw.substr(1));
                 break;
 
             // Integers
@@ -112,7 +112,7 @@ function loadRESP(redisClient, shouldReturnObject, cb) {
                     }
                     // If we need key value pairs
                     else {
-                        if (length % 2 != 0) cb(new Error("The value cannot be converted into an object!"), null);
+                        if (length % 2 != 0) cb("The value cannot be converted into an object!");
                         else {
                             data = {};
                             let key = '';
@@ -134,7 +134,7 @@ function loadRESP(redisClient, shouldReturnObject, cb) {
                 break;
 
             // Unknown
-            default: return cb(new Error('Protocol error!'));
+            default: return cb('Protocol error!');
         }
     });
 }
@@ -334,7 +334,15 @@ RedisClient.prototype = {
         if (!this._waitingForAnswer) {
             this._sock.write(msg);
             this._waitingForAnswer = true;
+            // Create Error object here to get better stack trace
+            var errObj = new Error();
+            errObj.name = 'RedisClientError';
             loadRESP(this, shouldReturnObject, (err, resp) => {
+                // Convert error string to error object
+                if (err && !(err instanceof Error)) {
+                    errObj.message = err;
+                    err = errObj;
+                }
                 this._waitingForAnswer = false;
                 this.emit('result', msg, resp);
                 cb && cb(err, resp);
@@ -930,7 +938,7 @@ RedisClientAsyncProxy.prototype = {
      * @param {int} ex Expiration in seconds
      * @return {Promise.<string>} Should be "OK"
      */
-    setex: proxyfy(RedisClient.prototype.set),
+    setex: proxyfy(RedisClient.prototype.setex),
 
     /**
      * Set multiple key-values at once
@@ -1117,11 +1125,20 @@ RedisPipeline.prototype = {
             // Support for negative index
             if (returnIndex < 0 && !(this._multiStart && this._execLast)) returnIndex = l + returnIndex;
 
+            // Create an Error object here to get better stack trace
+            let errObj = new Error();
+            errObj.name = 'RedisClientError';
+
             // Read next expected data
             let readNextData = (i) => {
                 var shouldReturnObject = this._cbShouldReturnObject[i],
                     cb = this._callbacks[i];
                 loadRESP(this.rclient, shouldReturnObject, (err, resp) => {
+                    // Convert error string to error object
+                    if (err && !(err instanceof Error)) {
+                        errObj.message = err;
+                        err = errObj;
+                    }
                     // If it starts with multi (it is a pmulti), then the result array should be the multi's result
                     if (this._multiStart && this._execLast) {
                         if (i == l - 1) {

@@ -2,7 +2,7 @@
   "author": "Adam Wallner",
   "name": "noderis",
   "description": "A standalone Node.js client for Redis",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "homepage": "https://github.com/wallneradam/noderis",
   "repository": {
     "type": "git",
