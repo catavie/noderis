@@ -340,6 +340,7 @@ RedisClient.prototype = {
             loadRESP(this, shouldReturnObject, (err, resp) => {
                 // Convert error string to error object
                 if (err && !(err instanceof Error)) {
+                    // noinspection JSValidateTypes
                     errObj.message = err;
                     err = errObj;
                 }
@@ -584,13 +585,85 @@ RedisClient.prototype = {
 
     /* Lists */
 
-    lpush(key, value, cb) { return this.callRedis('LPUSH', cb, key, value) },
-    rpush(key, value, cb) { return this.callRedis('RPUSH', cb, key, value) },
+    /**
+     * Insert all the specified values at the head of the list stored at key.
+     * @param {string} key
+     * @param {string|int|(string|int)[]} value Value(s) to push
+     * @param {Callback=} cb resp will be the new length of list
+     * @return {RedisClient}
+     */
+    lpush(key, value, cb) {
+        if (!Array.isArray(value)) value = [value];
+        return this.callRedis('LPUSH', cb, key, ...value)
+    },
+
+    /**
+     * Insert all the specified values at the tail of the list stored at key.
+     * @param {string} key
+     * @param {string|int|(string|int)[]} value Value(s) to push
+     * @param {Callback=} cb resp will be the new length of list
+     * @return {RedisClient}
+     */
+    rpush(key, value, cb) {
+        if (!Array.isArray(value)) value = [value];
+        return this.callRedis('RPUSH', cb, key, ...value)
+    },
+
+    /**
+     * Removes and returns the first element of the list stored at key.
+     * @param {string} key
+     * @param {Callback=} cb resp will be the the value of the first element, or nil when key does not exist.
+     * @return {RedisClient}
+     */
     lpop(key, cb) { return this.callRedis('LPOP', cb, key) },
+
+    /**
+     * Removes and returns the last element of the list stored at key.
+     * @param {string} key
+     * @param {Callback=} cb resp will be the value of the last element, or nil when key does not exist.
+     * @return {RedisClient}
+     */
     rpop(key, cb) { return this.callRedis('RPOP', cb, key) },
+
+    /**
+     * Returns the specified elements of the list stored at key.
+     * @param {string} key
+     * @param {int} startOffset
+     * @param {int} endOffset
+     * @param {Callback=} cb resp will be the list of elements in the specified range
+     * @return {RedisClient}
+     */
     lrange(key, startOffset, endOffset, cb) { return this.callRedis('LRANGE', cb, key, startOffset, endOffset) },
-    lrem(key, number, value, cb) { return this.callRedis('LREM', cb, key, number, value) },
-    ltrim(key, start, end, cb) { return this.callRedis('LTRIM', cb, key, start, end) },
+
+    /**
+     * Removes the first count occurrences of elements equal to value from the list stored at key.
+     * @param {string} key
+     * @param {int} count   count > 0: Remove elements equal to value moving from head to tail.
+                            count < 0: Remove elements equal to value moving from tail to head.
+                            count = 0: Remove all elements equal to value.
+     * @param {string|int} value Value to remove
+     * @param {Callback=} cb resp will be the number of removed elements
+     * @return {RedisClient}
+     */
+    lrem(key, count, value, cb) { return this.callRedis('LREM', cb, key, count, value) },
+
+    /**
+     * Trim an existing list so that it will contain only the specified range of elements.
+     * @param {string} key
+     * @param {int} start
+     * @param {int} stop
+     * @param {Callback=} cb resp should be "OK"
+     * @return {RedisClient}
+     */
+    ltrim(key, start, stop, cb) { return this.callRedis('LTRIM', cb, key, start, stop) },
+
+    /**
+     * Returns the length of the list stored at key.
+     * @param {string} key
+     * @param {Callback=} cb resp will be the the length of the list
+     * @return {RedisClient}
+     */
+    llen(key, cb) { return this.callRedis('LLEN', cb, key) },
 
     /* Sets */
 
@@ -662,7 +735,7 @@ RedisClient.prototype = {
      * Sets the specified fields to their respective values in the hash stored at key.
      * @param {string} key
      * @param {{}} object The key-value JS object to store as hash
-     * @param {Callback=} cb
+     * @param {Callback=} cb resp should be "OK"
      * @return {RedisClient}
      */
     hmset(key, object, cb) {
@@ -688,7 +761,7 @@ RedisClient.prototype = {
      * Returns the value associated with field in the hash stored at key.
      * @param {string} key
      * @param {string} field
-     * @param {Callback=} cb
+     * @param {Callback=} cb resp will be the value
      * @return {RedisClient}
      */
     hget(key, field, cb) { return this.callRedis('HGET', cb, key, field)},
@@ -697,7 +770,7 @@ RedisClient.prototype = {
      * Returns all fields and values of the hash stored at key.
      * Returns with JS key-value object
      * @param {string} key
-     * @param {Callback=} cb
+     * @param {Callback=} cb resp will be the list of fields and their values stored in the hash, or an empty list when key does not exist
      * @return {RedisClient}
      */
     hgetall(key, cb) { return this.callRedisGetObject('HGETALL', cb, key)},
@@ -708,7 +781,7 @@ RedisClient.prototype = {
      * @param {string} key
      * @param {string} field
      * @param {number|int=1} incrBy
-     * @param {Callback=} cb
+     * @param {Callback=} cb resp will be the value at field after the increment operation
      * @return {RedisClient}
      */
     hincr(key, field, incrBy, cb) {
@@ -721,16 +794,51 @@ RedisClient.prototype = {
      * Removes the specified fields from the hash stored at key.
      * @param {string} key
      * @param {string} field
-     * @param {Callback=} cb
+     * @param {Callback=} cb resp will be the number of fields that were removed from the hash
      * @return {RedisClient}
      */
     hdel(key, field, cb) { return this.callRedis('HDEL', cb, key, field)},
 
+    /**
+     * Returns the number of fields contained in the hash stored at key.
+     * @param {string} key
+     * @param {Callback=} cb resp will be the number of fields in the hash, or 0 when key does not exist
+     * @return {RedisClient}
+     */
+    hlen(key, cb) { return this.callRedis('HLEN', cb, key) },
+
     /* Sorted sets */
 
-    zincrby(key, incrBy, value, cb) { return this.callRedis('ZINCRBY', cb, key, incrBy, value) },
-    zrange(key, startOffset, endOffset, cb) { return this.callRedis('ZRANGE', cb, key, startOffset, endOffset) },
-    zremrangebyrank(key, startOffset, endOffset, cb) { return this.callRedis('ZREMRANGEBYRANK', cb, key, startOffset, endOffset) },
+    /**
+     * Increments the score of member in the sorted set stored at key by increment.
+     * @param {string} key
+     * @param {int} incrBy
+     * @param {int|string} member
+     * @param {Callback=} cb resp will be the new score of member
+     * @return {RedisClient}
+     */
+    zincrby(key, incrBy, member, cb) { return this.callRedis('ZINCRBY', cb, key, incrBy, member) },
+
+    /**
+     * Returns the specified range of elements in the sorted set stored at key.
+     * @param {string} key
+     * @param {int} start
+     * @param {int} stop
+     * @param {Callback=} cb resp will be the list of elements in the specified range
+     * @return {RedisClient}
+     * TODO: withscores support
+     */
+    zrange(key, start, stop, cb) { return this.callRedis('ZRANGE', cb, key, start, stop) },
+
+    /**
+     * Removes all elements in the sorted set stored at key with rank between start and stop.
+     * @param {string} key
+     * @param {int} start
+     * @param {int} stop
+     * @param {Callback=} cb resp will be the number of elements removed.
+     * @return {RedisClient}
+     */
+    zremrangebyrank(key, start, stop, cb) { return this.callRedis('ZREMRANGEBYRANK', cb, key, start, stop) },
 };
 
 // It is an event emitter
@@ -972,13 +1080,71 @@ RedisClientAsyncProxy.prototype = {
 
     /* Lists */
 
+    /**
+     * Insert all the specified values at the head of the list stored at key.
+     * @param {string} key
+     * @param {string|int|(string|int)[]} value Value(s) to push
+     * @return {Promise.<int>} the new length of list
+     */
     lpush: proxyfy(RedisClient.prototype.lpush),
+
+    /**
+     * Insert all the specified values at the tail of the list stored at key.
+     * @param {string} key
+     * @param {string|int|(string|int)[]} value Value(s) to push
+     * @return {Promise.<int>} the new length of list
+     */
     rpush: proxyfy(RedisClient.prototype.rpush),
+
+    /**
+     * Removes and returns the first element of the list stored at key.
+     * @param {string} key
+     * @return {Promise.<string|int|null>} the the value of the first element, or nil when key does not exist.
+     */
     lpop: proxyfy(RedisClient.prototype.lpop),
+
+    /**
+     * Removes and returns the last element of the list stored at key.
+     * @param {string} key
+     * @return {Promise.<string|int|null>} the value of the last element, or nil when key does not exist.
+     */
     rpop: proxyfy(RedisClient.prototype.rpop),
+
+    /**
+     * Returns the specified elements of the list stored at key.
+     * @param {string} key
+     * @param {int} startOffset
+     * @param {int} endOffset
+     * @return {Promise.<(string|int)[]>} the list of elements in the specified range
+     */
     lrange: proxyfy(RedisClient.prototype.lrange),
+
+    /**
+     * Removes the first count occurrences of elements equal to value from the list stored at key.
+     * @param {string} key
+     * @param {int} count   count > 0: Remove elements equal to value moving from head to tail.
+                            count < 0: Remove elements equal to value moving from tail to head.
+                            count = 0: Remove all elements equal to value.
+     * @param {string|int} value Value to remove
+     * @return {Promise.<int>} the number of removed elements
+     */
     lrem: proxyfy(RedisClient.prototype.lrem),
+
+    /**
+     * Trim an existing list so that it will contain only the specified range of elements.
+     * @param {string} key
+     * @param {int} start
+     * @param {int} stop
+     * @return {Promise.<string>} should be "OK"
+     */
     ltrim: proxyfy(RedisClient.prototype.ltrim),
+
+    /**
+     * Returns the length of the list stored at key.
+     * @param {string} key
+     * @return {Promise.<int>} the length of the list
+     */
+    llen: proxyfy(RedisClient.prototype.llen),
 
     /* Sets */
 
@@ -1015,17 +1181,92 @@ RedisClientAsyncProxy.prototype = {
 
     /* Hashes */
 
+    /**
+     * Sets field in the hash stored at key to value.
+     * If key does not exist, a new key holding a hash is created. If field already exists in the hash, it is overwritten.
+     * @param {string} key
+     * @param {string} field
+     * @param {string|int} value
+     * @return {Promise.<int>} 1 if field is new, 0 if field is already exists
+     */
     hset: proxyfy(RedisClient.prototype.hset),
+
+    /**
+     * Sets the specified fields to their respective values in the hash stored at key.
+     * @param {string} key
+     * @param {{}} object The key-value JS object to store as hash
+     * @return {Promise.<string>} should be "OK"
+     */
     hmset: proxyfy(RedisClient.prototype.hmset),
+
+    /**
+     * Returns the value associated with field in the hash stored at key.
+     * @param {string} key
+     * @param {string} field
+     * @return {Promise.<string|int>} the value
+     */
     hget: proxyfy(RedisClient.prototype.hget),
+
+    /**
+     * Returns all fields and values of the hash stored at key.
+     * Returns with JS key-value object
+     * @param {string} key
+     * @return {Promise.<(string|int)[]>} the list of fields and their values stored in the hash, or an empty list when key does not exist
+     */
     hgetall: proxyfy(RedisClient.prototype.hgetall),
+
+    /**
+     * Increments the number stored at field in the hash stored at key by incrBy
+     * @param {string} key
+     * @param {string} field
+     * @param {number|int=1} incrBy
+     * @return {Promise.<int>} the value at field after the increment operation
+     */
     hincr: proxyfy(RedisClient.prototype.hincr),
+
+    /**
+     * Removes the specified fields from the hash stored at key.
+     * @param {string} key
+     * @param {string} field
+     * @return {Promise.<int>} the number of fields that were removed from the hash
+     */
     hdel: proxyfy(RedisClient.prototype.hdel),
+
+    /**
+     * Returns the number of fields contained in the hash stored at key.
+     * @param {string} key
+     * @return {Promise.<int>} number of fields in the hash, or 0 when key does not exist
+     */
+    hlen: proxyfy(RedisClient.prototype.hlen),
 
     /* Sorted sets */
 
+    /**
+     * Increments the score of member in the sorted set stored at key by increment.
+     * @param {string} key
+     * @param {int} incrBy
+     * @param {int|string} member
+     * @param {Callback=} cb resp will be the new score of member
+     * @return {Promise.<float>} the new score of member
+     */
     zincrby: proxyfy(RedisClient.prototype.zincrby),
+
+    /**
+     * Returns the specified range of elements in the sorted set stored at key.
+     * @param {string} key
+     * @param {int} start
+     * @param {int} stop
+     * @return {Promise.<(string|int)[]>} list of elements in the specified range
+     */
     zrange: proxyfy(RedisClient.prototype.zrange),
+
+    /**
+     * Removes all elements in the sorted set stored at key with rank between start and stop.
+     * @param {string} key
+     * @param {int} start
+     * @param {int} stop
+     * @return {Promise.<int>} the number of elements removed.
+     */
     zremrangebyrank: proxyfy(RedisClient.prototype.zremrangebyrank),
 };
 
@@ -1136,6 +1377,7 @@ RedisPipeline.prototype = {
                 loadRESP(this.rclient, shouldReturnObject, (err, resp) => {
                     // Convert error string to error object
                     if (err && !(err instanceof Error)) {
+                        // noinspection JSValidateTypes
                         errObj.message = err;
                         err = errObj;
                     }
