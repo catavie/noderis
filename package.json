@@ -2,8 +2,9 @@
   "author": "Adam Wallner",
   "name": "noderis",
   "description": "A standalone Node.js client for Redis",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "homepage": "https://github.com/wallneradam/noderis",
+  "license": "GPL-3.0",
   "repository": {
     "type": "git",
     "url": "git://github.com/wallneradam/noderis.git"
@@ -13,5 +14,11 @@
     "node": "^6.0.0"
   },
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "chai": "^4.1.2",
+    "dockunit": "git+https://github.com/wallneradam/dockunit.git"
+  },
+  "scripts": {
+    "test": "node_modules/.bin/dockunit --du-verbose"
+  }
 }

@@ -32,14 +32,14 @@ function seraializeInputRESP(input) {
 /**
  * Load and parse RESP answer from Redis recursively
  * @param {RedisClient} redisClient Socket object
- * @param {boolean=false} shouldReturnObject If the command should return object (convert it to a JS object)
- * @param {Callback=} cb
+ * @param {boolean} shouldReturnObject If the command should return object (convert it to a JS object)
+ * @param {Callback} cb
  * @return {string|int|Object}
  */
 function loadRESP(redisClient, shouldReturnObject, cb) {
     // Wait for a line from socket
     redisClient._readLine((raw) => {
-        if (raw === false) cb('Protocol error!');
+        if (raw === false) return cb('Protocol error!');
 
         var fb = raw.substr(0, 1),
             data, length;
@@ -66,9 +66,7 @@ function loadRESP(redisClient, shouldReturnObject, cb) {
                 // The 1st is the length of the string
                 length = parseInt(raw.substr(1), 10);
                 // Empty string
-                if (length === 0) redisClient._readLine((line) => {
-                    cb(null, line)
-                });
+                if (length === 0) redisClient._readLine((line) => { cb(null, line) });
                 // Null string
                 else if (length == -1) cb(null, null);
                 // Normal string
@@ -83,7 +81,7 @@ function loadRESP(redisClient, shouldReturnObject, cb) {
                             data += line;
                             if (length > 0 && ll > 0) readNextLine();
                             else cb(null, data);
-                        });
+                        }, true); // Bulk strings can have multiple lines, so we need to preserve line separators
                     };
                     readNextLine();
                 }
@@ -144,8 +142,10 @@ function loadRESP(redisClient, shouldReturnObject, cb) {
  * Create redis client connection
  * @param {int|string=6379} port Redis port (default is 6379)
  * @param {string=} host Redis host (default is 127.0.0.01)
- * @param {{autoReconnectAfter: int|undefined=,
+ * @param {{connectionTimeout: int|undefined=,
+ *          autoReconnectAfter: number|undefined=,
  *          autoCloseTransaction: boolean|undefined=}=} options RedisClient options
+ *                  connectionTimeout -- Timeout for a successfull conenction is seconds (default is 10sec)
  *                  autoReconnectAfter -- If disconnected, after how many seconds we try to reconnect, if false, no reconnect
  *                  autoCloseTransaction -- call EXEC automatically in a pipeline (pmulti)
  * @constructor
@@ -157,6 +157,8 @@ function RedisClient(port, host, options) {
 
     // Options
     this.options = options || {};
+
+    this.options.connectionTimeout = this.options.connectionTimeout || 15;
     // If socket is disconnected, it will reconnect after this amount of seconds. Set to false for no auto reconnections.
     this.options.autoReconnectAfter = this.options.autoReconnectAfter !== undefined ? this.options.autoReconnectAfter : 3;
     // Set to false if you don't want automatic transaction close on send
@@ -164,6 +166,9 @@ function RedisClient(port, host, options) {
 
     /** @type {net.Socket} */
     this._sock = null;
+
+    this._connected = false;
+    this._enableReconnect = true;
 
     // It is true if a command has been sent and waiting for answer (every Redis command has an answer)
     this._waitingForAnswer = false;
@@ -173,11 +178,19 @@ function RedisClient(port, host, options) {
     // The line reader callback
     this._lineReader = null;
 
-    // We need to listen for answers while another
+    // We need to listen for answers while another command is pending
     this.setMaxListeners(100);
+
+    this._poolIndex = 0;
 }
 
+// noinspection JSUnusedGlobalSymbols
 RedisClient.prototype = {
+    /**
+     * @return {number} The index of the client in the pool (if it is in pool, otherwise it is always 0)
+     */
+    get poolIndex() {return this._poolIndex },
+
     /**
      * Connect to redis server
      * @param {Callback=} cb
@@ -185,38 +198,26 @@ RedisClient.prototype = {
      */
     connect(cb) {
         var sock = new net.Socket(),
-            dataBuf = '';
+            lineBuff = '', cto = null;
         // Setup communication
         sock.setNoDelay();
         // noinspection JSUnresolvedFunction
         sock.setEncoding('utf8');
+        // Handle connection error
+        var connErrorFunc = (exception) => {
+            clearTimeout(cto);
+            cb && cb.call(this, exception, null);
+            this.emit('connect_error', exception);
+            if (this._enableReconnect) this.reconnectAfter();
+        };
+        sock.once('error', connErrorFunc);
         // Connect to Redis
         sock.connect(this.port, this.host, () => {
+            clearTimeout(cto);
             // From here we enable reconnect
-            this._enableReconnect = true;
             this._connected = true;
-            // Process data received
-            sock.on('data', (data) => {
-                dataBuf += data;
-                // Process full lines
-                while (true) {
-                    let i = dataBuf.indexOf("\r\n");
-                    if (i == -1) break;
-                    let line = dataBuf.substr(0, i);
-                    dataBuf = dataBuf.substr(i + 2);
-                    // Notify listeners about new line
-                    this._lineReader && this._lineReader(line);
-                }
-                if (dataBuf.length > MAX_LINE_BUFF_LENGTH) dataBuf = dataBuf()
-            });
-            // Detect connection end
-            sock.on('end', (had_error) => {
-                this.destroy();
-                // Notify subscribers about connection close
-                this.emit('close', had_error);
-                // Reconnect
-                if (this._enableReconnect) this.reconnectAfter();
-            });
+            // Remove connection error handler
+            this.removeListener('error', connErrorFunc);
             // Handle errors
             sock.on('error', (exception) => {
                 this.emit('error', exception);
@@ -224,17 +225,58 @@ RedisClient.prototype = {
                 else this.destroy();
             });
             // Notify caller about successfull connection
-            cb && cb(null, true);
+            cb && cb.call(this, null, true);
+            // Emit connection event
+            this.emit('connected');
+            // Process data received
+            sock.on('data', (data) => {
+                lineBuff += data;
+                // Process full lines
+                while (true) {
+                    let i = lineBuff.indexOf("\r\n");
+                    if (i == -1) break;
+                    i += 2;
+                    let line = lineBuff.substr(0, i);
+                    lineBuff = lineBuff.substr(i);
+                    // If we get the max number of clients error, we need to close this connection
+                    if (line == '-ERR max number of clients reached\r\n') {
+                        this.disconnect()
+                    } else {
+                        // Notify listeners about new line
+                        this._lineReader && this._lineReader(line);
+                    }
+                }
+                if (lineBuff.length > MAX_LINE_BUFF_LENGTH) lineBuff = lineBuff.substr(-MAX_LINE_BUFF_LENGTH);
+            });
+            // Detect connection end
+            sock.on('end', (had_error) => {
+                // Notify subscribers about connection close
+                this.emit('disconnected', had_error);
+                // Reconnect
+                if (this._enableReconnect) this.reconnectAfter();
+                else this.destroy();
+            });
         });
-        // Handle connection error
-        sock.once('error', (exception) => {
-            cb && cb(exception, null);
-            this.emit('connect_error', exception);
+        // Connection timeout
+        cto = setTimeout(() => {
+            let exception = new Error('Connection timeout!');
+            exception.name = 'RedisClientError';
+            cb && cb.call(this, exception, null);
+            // Reconnect
             if (this._enableReconnect) this.reconnectAfter();
-        });
+            else this.destroy();
+        }, this.options.connectionTimeout * 1000);
         this._sock = sock;
         // Return self to be chainable
         return this;
+    },
+
+    /**
+     * True if the client is connected
+     * @return {boolean}
+     */
+    get connected() {
+        return this._connected;
     },
 
     /**
@@ -242,7 +284,11 @@ RedisClient.prototype = {
      */
     destroy() {
         this._connected = false;
-        if (this._sock) this._sock.destroy();
+        if (!this._enableReconnect) this.removeAllListeners();
+        if (this._sock) {
+            this._sock.removeAllListeners();
+            this._sock.destroy();
+        }
         this._sock = null;
     },
 
@@ -251,16 +297,25 @@ RedisClient.prototype = {
      * @param {Callback=} cb
      */
     disconnect(cb) {
-        if (!this._sock) cb(new Error("Not connected!"));
+        if (!this._sock) cb && cb.call(this, new Error("Not connected!"));
         else {
             this._enableReconnect = false;
-            this._sock.once('close', () => {
+            let onClose = () => {
                 this.destroy();
-                cb && cb(null, true);
-            });
+                cb && cb.call(this, null, true);
+            };
+            this._sock.on('close', onClose);
+            this._sock.on('end', onClose);
             this._sock.end();
         }
     },
+
+    /**
+     * Shortcut to disconnect
+     * @see disconnect
+     * @param {Callback=} cb
+     */
+    close(cb) { this.disconnect(cb) },
 
     /**
      * Destroy active conenction (if any) then reconnect
@@ -268,7 +323,7 @@ RedisClient.prototype = {
      * @return {RedisClient}
      */
     reconnect(cb) {
-        if (this._connected) this.destroy();
+        if (this._sock) this.destroy();
         return this.connect(cb);
     },
 
@@ -278,13 +333,11 @@ RedisClient.prototype = {
      * @return {RedisClient}
      */
     reconnectAfter(cb) {
-        if (this._connected) this.destroy();
+        if (this._sock) this.destroy();
         // Reconnect after specified timeout if enabled
         if (this.options.autoReconnectAfter !== false) {
-            setTimeout(() => { this.reconnect(cb) }, this.options.autoReconnectAfter);
-        } else {
-            cb(new Error("Reconnection is not enabled"));
-        }
+            setTimeout(() => { this.reconnect(cb) }, this.options.autoReconnectAfter * 1000);
+        } else cb && cb.call(this, new Error("Reconnection is not enabled"));
         return this;
     },
 
@@ -294,14 +347,14 @@ RedisClient.prototype = {
      * @return {RedisClient}
      */
     ensureConnected(cb) {
-        // this means not started connecting
-        if (!this._enableReconnect) cb && cb(null, false);
+        // this means not started connecting or destroyed
+        if (!this._sock) cb && cb.call(this, null, false);
         else {
             if (this._connected) {
                 cb && cb(null, true);
             } else {
                 this.once('connected', () => {
-                    cb && cb(null, true);
+                    cb && cb.call(this, null, true);
                 });
             }
         }
@@ -310,13 +363,19 @@ RedisClient.prototype = {
 
     /**
      * Read line from redis
-     * Lines are separated by "\r\n", which is not found in the returned string
+     * Lines are separated by "\r\n", which is included if needLineSeparator is true
      * Only one callback can be waiting for a line!
      * @param {function(string|boolean)} cb Called when a line has received
+     * @param {boolean=false} needLineSeparator If it is true, new line separator will be included
      */
-    _readLine(cb) {
-        if (!this._connected || this._lineReader) cb(false);
-        else this._lineReader = (line) => { this._lineReader = null; cb(line) };
+    _readLine(cb, needLineSeparator) {
+        if (!this._connected || this._lineReader) cb.call(this, false);
+        else this._lineReader = (line) => {
+            // Remove line separator if not needed
+            if (!needLineSeparator) line = line.substr(0, line.length - 2);
+            this._lineReader = null;
+            cb.call(this, line)
+        };
     },
 
 
@@ -332,21 +391,28 @@ RedisClient.prototype = {
     callRedisRaw(msg, shouldReturnObject, cb) {
         // If no other commands in progress
         if (!this._waitingForAnswer) {
-            this._sock.write(msg);
-            this._waitingForAnswer = true;
-            // Create Error object here to get better stack trace
-            var errObj = new Error();
-            errObj.name = 'RedisClientError';
-            loadRESP(this, shouldReturnObject, (err, resp) => {
-                // Convert error string to error object
-                if (err && !(err instanceof Error)) {
-                    // noinspection JSValidateTypes
-                    errObj.message = err;
-                    err = errObj;
-                }
-                this._waitingForAnswer = false;
-                this.emit('result', msg, resp);
-                cb && cb(err, resp);
+            if (this._connected) {
+                this._waitingForAnswer = true;
+                this._sock.write(msg);
+                // Create Error object here to get better stack trace
+                var errObj = new Error();
+                errObj.name = 'RedisClientError';
+                loadRESP(this, shouldReturnObject, (err, resp) => {
+                    // Convert error string to error object
+                    if (err && !(err instanceof Error)) {
+                        // noinspection JSValidateTypes
+                        errObj.message = err;
+                        err = errObj;
+                    }
+                    this._waitingForAnswer = false;
+                    this.emit('result', msg, resp);
+                    cb && cb.call(this, err, resp);
+                    if (err) this.emit('redis_error', err);
+                });
+            }
+            // We need to wait for connection until we can send
+            else this.once('connected', () => {
+                this.callRedisRaw(msg, shouldReturnObject, cb)
             });
         }
         // We need to wait until the other command finished (got result)
@@ -417,13 +483,13 @@ RedisClient.prototype = {
      * @return {RedisClient}
      */
     multi(cb) {
-        if (this._transactionOpened) cb && cb(new Error('MULTI calls can not be nested!'));
+        if (this._transactionOpened) cb && cb.call(this, new Error('MULTI calls can not be nested!'));
         else {
             this._transactionOpened = true;
             this.callRedis('MULTI', (err, resp) => {
-                if (err) cb && cb(err);
-                else if (resp != "OK") cb && cb(new Error("MULTI call error: %s", resp));
-                else cb && cb(null, this);
+                if (err) cb && cb.call(this, err);
+                else if (resp != "OK") cb && cb.call(this, new Error("MULTI call error: %s", resp));
+                else cb && cb.call(this, null, this);
             });
         }
         return this;
@@ -559,7 +625,7 @@ RedisClient.prototype = {
     /**
      * Increment a number
      * @param {string} key
-     * @param {int|float=} incrBy If specified, the value will be incremented by this
+     * @param {int|number=} incrBy If specified, the value will be incremented by this
      * @param {Callback=} cb resp will be the new value
      * @return {RedisClient}
      */
@@ -572,7 +638,7 @@ RedisClient.prototype = {
     /**
      * Decrement a number
      * @param {string} key
-     * @param {int|float=} decrBy If specified, the value will be decrement by this
+     * @param {int|number=} decrBy If specified, the value will be decrement by this
      * @param {Callback=} cb resp will be the new value
      * @return {RedisClient}
      */
@@ -887,6 +953,18 @@ function proxyfy(func, ensureArgumentsLength) {
 
 RedisClientAsyncProxy.prototype = {
     /**
+     * Disconnect gracefully from Redis
+     * @return {Promise}
+     */
+    disconnect: proxyfy(RedisClient.prototype.disconnect),
+
+    /**
+     * Shortcut to disconnect
+     * @see disconnect
+     */
+    close: proxyfy(RedisClient.prototype.close),
+
+    /**
      * Send already serialized message to redis
      * Then wait for answer. The answer is automatically unserialized.
      * Normally this function should not be called directly.
@@ -923,6 +1001,25 @@ RedisClientAsyncProxy.prototype = {
                 if (err !== null) reject(err);
                 else resolve(resp);
             }, ...params);
+        });
+    },
+
+    // Event handlers
+    on(type, listener) { this.proxified.on(type, listener) },
+    once(type, listener) { this.proxified.once(type, listener) },
+    removeListener(type, listener) { this.proxified.removeListener(type, listener) },
+    removeAllListeners(type) { this.proxified.removeAllListeners(type) },
+
+    /**
+     * Wait for an event and it's result
+     * @param {string} type The event type
+     * @return {Promise} Returns with the result of the event listener
+     */
+    waitForEvent(type) {
+        return new Promise((resolve) => {
+            this.proxified.once(type, (...params) => {
+                resolve(params);
+            });
         });
     },
 
@@ -1065,16 +1162,16 @@ RedisClientAsyncProxy.prototype = {
     /**
      * Increment a number
      * @param {string} key
-     * @param {int|float=} incrBy If specified, the value will be incremented by this
-     * @return {Promise.<int|float>} The new value
+     * @param {int|number=} incrBy If specified, the value will be incremented by this
+     * @return {Promise.<int|number>} The new value
      */
     incr: proxyfy(RedisClient.prototype.incr),
 
     /**
      * Decrement a number
      * @param {string} key
-     * @param {int|float=} decrBy If specified, the value will be decrement by this
-     * @return {Promise.<int|float>} The new value
+     * @param {int|number=} decrBy If specified, the value will be decrement by this
+     * @return {Promise.<int|number>} The new value
      */
     decr: proxyfy(RedisClient.prototype.decr),
 
@@ -1247,7 +1344,7 @@ RedisClientAsyncProxy.prototype = {
      * @param {int} incrBy
      * @param {int|string} member
      * @param {Callback=} cb resp will be the new score of member
-     * @return {Promise.<float>} the new score of member
+     * @return {Promise.<number>} the new score of member
      */
     zincrby: proxyfy(RedisClient.prototype.zincrby),
 
@@ -1393,11 +1490,12 @@ RedisPipeline.prototype = {
                     } else if (returnIndex !== undefined && returnIndex !== null) {
                         if (i == returnIndex) send_resp = resp;
                     } else send_resp.push(resp);
-                    cb && cb(err, resp);
+                    cb && cb.call(this, err, resp);
+                    if (err) this.emit('redis_error', err);
                     // Read next data or send callback if no more data
                     if (++i < l) readNextData(i);
                     else {
-                        send_cb && send_cb(null, send_resp);
+                        send_cb && send_cb.call(this, null, send_resp);
                         this.rclient._waitingForAnswer = false;
                     }
                 });
@@ -1432,11 +1530,12 @@ RedisPipeline.prototype = {
 
 // noinspection JSCheckFunctionSignatures
 RedisPipeline.prototype.connect =
+    RedisPipeline.prototype.destroy =
     RedisPipeline.prototype.disconnect =
-        RedisPipeline.prototype.reconnect =
-            RedisPipeline.prototype.reconnectAfter = () => {
-                throw "Use the RedisClient's own function instead of the pipeline!"
-            };
+    RedisPipeline.prototype.reconnect =
+        RedisPipeline.prototype.reconnectAfter = () => {
+            throw "Use the RedisClient's own function instead of the pipeline!"
+        };
 
 // All other methods inherited from RedisClient
 util.inherits(RedisPipeline, RedisClient);
@@ -1493,13 +1592,14 @@ function RedisClientPool(port, host, options, poolSize) {
     this.poolSize = poolSize || 5;
     for (let i = 0; i < poolSize; i++) {
         let rclient = new RedisClient(port, host, options);
+        rclient._poolIndex = i;
         this.clients.push(rclient);
     }
-
     this._connected = false;
     this.options = options;
 }
 
+// noinspection JSUnusedGlobalSymbols
 RedisClientPool.prototype = {
     /**
      * Find a ready client in the pool
@@ -1514,7 +1614,7 @@ RedisClientPool.prototype = {
             if (client._connected && !client._waitingForAnswer && !client._transactionOpened) {
                 // Use this client
                 found = true;
-                cb(null, client);
+                cb.call(this, null, client);
                 break;
             }
         }
@@ -1536,22 +1636,44 @@ RedisClientPool.prototype = {
         return this;
     },
 
+    get numberOfClients() {
+        var noc = 0;
+        for (let i = 0; i < this.poolSize; i++) {
+            let client = this.clients[i];
+            if (client && client._connected) noc++;
+        }
+        return noc;
+    },
+
     connect(cb) {
         for (let i = 0; i < this.poolSize; i++) {
             let client = this.clients[i];
+            if (!client) continue;
+            client.on('connect_error', (err) => { this.emit('connect_error', err, client) });
+            // Connect to client
             client.connect((err, resp) => {
                 this._connected = true;
                 // The 1st connection response will be used as pool connect response,
                 //  we can immediately send commands if we have one client
-                cb && cb(err, resp);
+                cb && cb.call(this, err, resp);
+                cb && this.emit('connected');
                 cb = null;
+                // Emit client_connection event
+                this.emit("client_connected", client);
+                // Forward client events
+                client.on('error', (err) => { this.emit('client_error', err, client) });
+                client.on('disconnected', (had_error) => { this.emit('client_disconnected', had_error, client)});
+                // Handle redis errors
+                client.on('redis_error', (err) => {
+                   console.error('redis error:',  err);
+                });
             });
         }
     },
 
     callRedisRaw(msg, shouldReturnObject, cb) {
         this.getAvailableClient((err, client) => {
-            if (err) cb && cb(err);
+            if (err) cb && cb.call(this, err);
             else client.callRedisRaw(msg, shouldReturnObject, cb);
         });
         return this;
@@ -1563,7 +1685,7 @@ RedisClientPool.prototype = {
         for (let i = 0; i < this.poolSize; i++) {
             let client = this.clients[i];
             client.disconnect((err, resp) => {
-                if (--toDisconnect == 0) cb && cb(err, resp);
+                if (--toDisconnect == 0) cb && cb.call(this, err, resp);
             });
         }
     },
@@ -1621,7 +1743,7 @@ RedisClientPoolPipeline.prototype = {
      */
     send(returnIndex, send_cb) {
         this.rclient.getAvailableClient((err, client) => {
-            if (err) send_cb && send_cb(err);
+            if (err) send_cb && send_cb.call(this, err);
             else {
                 this.rclient = client;
                 RedisPipeline.prototype.send.call(this, returnIndex, send_cb);
@@ -1661,13 +1783,15 @@ exports.async_rclient = null;
  * Create redis connection objects
  * exports.rclient will be the callback based client
  * exports.rclient_async will be the promise based client
- * @param {int|string} port
- * @param {string} host
+ * @param {int=6379} port Default is 6379
+ * @param {string=} host Default is 127.0.0.1
  * @param {{}=} options
  * @param {Callback=} cb Called when connection established
  * @return {RedisClient|null}
  */
 function createClient(port, host, options, cb) {
+    port = port || 6379;
+    host = host || '127.0.0.1';
     exports.rclient = new RedisClient(port, host, options);
     exports.rclient_async = new RedisClientAsyncProxy(exports.rclient);
     exports.rclient.connect(cb);
@@ -1680,14 +1804,16 @@ function createClient(port, host, options, cb) {
  * It always tries to use the 1st free client. If there is no free client, it waits for the 1st to be ready.
  * exports.rclient will be the callback based client pool
  * exports.rclient_async will be the promise based client pool
- * @param {int|string} port
- * @param {string} host
+ * @param {int=6379} port Default is 6379
+ * @param {string=} host Default is 127.0.0.1
  * @param {{}=} options
  * @param {int=5} poolSize Size of client pool
  * @param {Callback=} cb Called when connection established
  * @return {RedisClient|null}
  */
 function createClientPool(port, host, options, poolSize, cb) {
+    port = port || 6379;
+    host = host || '127.0.0.1';
     exports.rclient = new RedisClientPool(port, host, options, poolSize);
     exports.rclient_async = new RedisClientAsyncProxy(exports.rclient, RedisClientPoolPipelineAsync);
     exports.rclient.connect(cb);
@@ -1701,22 +1827,27 @@ function createClientPool(port, host, options, poolSize, cb) {
 // noinspection JSUnresolvedVariable
 if (global.REDIS_HOST && global.REDIS_PORT) {
     // noinspection JSUnresolvedVariable
-    let options = REDIS_OPTIONS || {};
+    let options = global.REDIS_OPTIONS !== undefined ? REDIS_OPTIONS : {};
     // If we have global pool size config, we create a pool
     // noinspection JSUnresolvedVariable
     if (global.REDIS_POOL_SIZE) {
         // noinspection JSUnresolvedVariable
-        createClientPool(REDIS_PORT, REDIS_HOST, options, REDIS_POOL_SIZE, function() {
-            // noinspection JSUnresolvedVariable
-            console.log('Redis client pool connected to %s:%i, pool size: %i', REDIS_HOST, REDIS_PORT, REDIS_POOL_SIZE);
+        createClientPool(REDIS_PORT, REDIS_HOST, options, REDIS_POOL_SIZE, function(err) {
+            if (!err) {
+                // noinspection JSUnresolvedVariable
+                console.log('Redis client pool connected to %s:%i, pool size: %i', REDIS_HOST, REDIS_PORT, REDIS_POOL_SIZE);
+            }
+
         });
     }
     // If not we just create a client
     else {
         // noinspection JSUnresolvedVariable
-        createClient(REDIS_PORT, REDIS_HOST, options, function() {
-            // noinspection JSUnresolvedVariable
-            console.log('Redis client connected to %s:%i', REDIS_HOST, REDIS_PORT);
+        createClient(REDIS_PORT, REDIS_HOST, options, function(err) {
+            if (!err) {
+                // noinspection JSUnresolvedVariable
+                console.log('Redis client connected to %s:%i', REDIS_HOST, REDIS_PORT);
+            }
         });
     }
 }

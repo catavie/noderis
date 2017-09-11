@@ -60,3 +60,8 @@ typings/
 .idea/dictionaries/
 .idea/vcs.xml
 .idea/workspace.xml
+
+# It is automatically generated, and no need for normal package
+package-lock.json
+
+!redisServer.js

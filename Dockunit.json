@@ -1,0 +1,14 @@
+{
+  "containers": [
+    {
+      "prettyName": "Node.js 8 - Alpine - Max 10 connections",
+      "image": "node:8-alpine",
+      "shell": "/bin/sh",
+      "beforeScripts": [
+        "apk --no-cache add redis",
+        "npm install -g mocha"
+      ],
+      "testCommand": "mocha"
+    }
+  ]
+}

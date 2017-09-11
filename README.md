@@ -97,6 +97,22 @@ try {
 }
 ```
 
+### Events
+
+- `connected`: Emitted when connection is ready. It is called once. If you use pool, emmitted when 1st client is connected.
+- `disconnected`: When the client is disconnected. In pool emitted if all clients are disconnected. 
+- `connect_error`: When error occured while connecting, or connection timeout occured.
+- `error`: Errors in connection and communication with Redis server.
+- `redis_error`: Errors from Redis server and protocol errors.
+
+**ConnectionPool**
+
+All events are the same (because pool is transparent), but you can listen on the following client events if you want:
+
+- `client_connected`: When a client is connected in the pool.
+- `client_disconnected`: When any client is disconnected in the pool.
+
+
 ### Pipeline and (MULTI-EXEC) transaction 
 
 Creating pipeline is very easy, then you can chain every command:
