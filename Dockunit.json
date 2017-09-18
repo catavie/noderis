@@ -1,7 +1,7 @@
 {
   "containers": [
     {
-      "prettyName": "Node.js 8 - Alpine - Max 10 connections",
+      "prettyName": "Node.js 8 - Alpine Linux",
       "image": "node:8-alpine",
       "shell": "/bin/sh",
       "beforeScripts": [

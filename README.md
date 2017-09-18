@@ -181,10 +181,8 @@ every additional command returns with a "QUEUED" response. Instead we will get t
 
 - Implement all Redis commands
 - Create documentation for every command
-- Better documentation for the module
 - Not blindly implement all, but if it ispossible, make it more JS and programmer friendly (e.g. SET, MSET... in source code)
-- Create unit tests
-- Create performance comparisons (help wanted)
+- Create benchmarks
 
 ## Status
 
@@ -230,3 +228,9 @@ RedisClientAsyncProxy.prototype = {
     // ...
 }
 ```
+
+## Unit tests
+
+Unit tests use Mocha. If you have mocha and redis server installed on your local machine you can simple run
+`mocha`. If not, you need Docker to test with dockunit-plus. Simple run `npm test` to start test in a docker 
+container.

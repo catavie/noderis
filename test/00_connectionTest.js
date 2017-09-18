@@ -2,59 +2,23 @@
 
 const
     assert = require('chai').assert,
-    redisServer = require('./node_modules/redisServer');
+    redisServer = require('./node_modules/redisServer'),
+    unloadModule = require('./node_modules/unloadModule'),
+    timeout = require('./node_modules/timeout');
 
-/**
- * Unload a node module and all associated children from node require cache
- * @param {string} moduleName The name of the module or absolute/relative path to it
- */
-function unloadModule(moduleName) {
-    var solvedName = require.resolve(moduleName),
-        nodeModule = require.cache[solvedName];
-    if (nodeModule) {
-        for (var i = 0; i < nodeModule.children.length; i++) {
-            var child = nodeModule.children[i];
-            unloadModule(child.filename);
-        }
-        delete require.cache[solvedName];
-    }
-}
-
-/**
- * Timeout with promise
- * @param {int} ms
- * @param {function=} cb
- * @return {Promise}
- */
-function timeout(ms, cb) { return new Promise(resolve => setTimeout(() => {cb && cb(); resolve(); }, ms)) }
+require('./node_modules/filterLogs')(['RedisClient']);
 
 
-/**
- * Filter log form the library
- * @type {console.log}
- */
-const console_log = console.log;
-console.log = (...params) => {
-    let e = new Error(),
-        stack = e.stack.split('\n');
-    stack.splice(0, 2);
-    let caller = stack.shift().trim();
-    if (caller.indexOf('RedisClient') === -1) console_log(...params);
-};
+describe('Connection tests', function() {
+    this.bail(true);
 
-
-describe('Connection', function() {
-    let desc = this;
-    desc.bail(true);
-
-    it('start Redis server', async function() {
+    it('start server', async function() {
         try {
             await redisServer.startRedis({port: 63790, maxclients: 5});
         } catch (e) {
             console.error(e);
             throw e;
         }
-        desc.bail(true);
     });
 
     it('connect with createclient', function(done) {
@@ -119,7 +83,7 @@ describe('Connection', function() {
         });
     });
 
-    it('clientPool 5 clients (5 is the maximum in Redis) -> should have 5 available clients', function(done) {
+    it('clientPool 5 clients (5 max) -> should have 5 available clients', function(done) {
         // Start from scratch
         unloadModule('../noderis');
 
@@ -149,7 +113,7 @@ describe('Connection', function() {
         });
     });
 
-    it('clientPool 10 clients (5 is the maximum in Redis) -> should have 5 available clients', function(done) {
+    it('clientPool 10 clients (5 max) -> should have 5 available clients', function(done) {
         this.timeout(500);
         // Start from scratch
         unloadModule('../noderis');
@@ -170,7 +134,7 @@ describe('Connection', function() {
             connectedEvent = true;
         });
 
-        noderis.rclient.on('client_connected', function(client) {
+        noderis.rclient.on('client_connected', function() {
             if (--clients == 0) {
                 assert.isTrue(this.connected);
                 assert.isTrue(cbOK);
@@ -183,12 +147,12 @@ describe('Connection', function() {
         });
     });
 
-    it('stop Redis server', async function() {
+    it('stop server', async function() {
         await redisServer.stopRedis();
     });
 
-    it('wait for Redis server started, queue until connection', async function() {
-        this.timeout(5000);
+    it('client wait for server, queue until connection', async function() {
+        this.timeout(3000);
         unloadModule('../noderis');
         let noderis = require('../noderis');
         noderis.createClient(63790, '127.0.0.1', {autoReconnectAfter: 0.5});
@@ -208,8 +172,8 @@ describe('Connection', function() {
         }
     });
 
-    it ('should reconnect after server accessible again', async function () {
-        this.timeout(5000);
+    it ('client should reconnect', async function () {
+        this.timeout(3000);
         unloadModule('../noderis');
         let noderis = require('../noderis');
         await redisServer.startRedis({port: 63790, maxclients: 5});
@@ -223,5 +187,20 @@ describe('Connection', function() {
         await redisServer.stopRedis();
     });
 
+    it ('pool should reconnect', async function () {
+        this.timeout(3000);
+        unloadModule('../noderis');
+        let noderis = require('../noderis');
+        await redisServer.startRedis({port: 63790, maxclients: 15});
+        noderis.createClientPool(63790, '127.0.0.1', {autoReconnectAfter: 0.5}, 5);
+        await noderis.rclient_async.waitForEvent('connected');
+        assert.equal(await noderis.rclient_async.ping(), 'PONG');
+        await redisServer.stopRedis();
+        // Start redis after timeout
+        setTimeout(() => { redisServer.startRedis({port: 63790, maxclients: 5}) }, 1000);
+        assert.equal(await noderis.rclient_async.ping(), 'PONG');
+        await noderis.rclient_async.disconnect();
+        await redisServer.stopRedis();
+    });
 });
 

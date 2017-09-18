@@ -65,3 +65,6 @@ typings/
 package-lock.json
 
 !redisServer.js
+!unloadModule.js
+!timeout.js
+!filterLogs.js
