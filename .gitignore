@@ -64,7 +64,5 @@ typings/
 # It is automatically generated, and no need for normal package
 package-lock.json
 
-!redisServer.js
-!unloadModule.js
-!timeout.js
-!filterLogs.js
+# We need node_modules for tests
+!test/node_modules
